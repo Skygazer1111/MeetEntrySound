@@ -1,0 +1,218 @@
+Project: MeetEntry — Automatic Google Meet Entrance Music
+
+1. Project Overview
+
+Build a production-ready Google Chrome extension called MeetEntry that automatically plays a personalized 5–10-second entrance music clip whenever the extension’s user joins a Google Meet.
+
+Core concept: Just like a WWE wrestler’s entrance theme, the user’s chosen music should play to everyone already present in the Google Meet the moment the user successfully joins.
+
+Only the person entering the meeting needs the extension. Other participants must hear the music through the normal Google Meet audio connection without installing anything.
+
+The extension should work on Windows using Google Chrome and should not require screen sharing or manually pressing Play after joining.
+
+2. Core User Experience
+
+The user should be able to:
+
+1. Install the extension in Chrome.
+2. Open the extension popup and configure a personal profile.
+3. Optionally enter their Gmail address and Google Meet display name for profile identification.
+4. Upload a custom MP3 or WAV audio clip.
+5. Choose an entrance duration between 5 and 10 seconds.
+6. Adjust the music volume and preview the clip.
+7. Enable automatic entrance music.
+8. Join any Google Meet normally.
+
+Expected behavior:
+
+* The extension detects when the user has actually entered the meeting, not merely opened the waiting room.
+* The entrance music automatically starts once.
+* Every participant in the call hears the clip.
+* The music stops after the configured duration.
+* The user’s microphone continues working normally.
+* The user doesn’t need to share their screen or ask other participants to install anything.
+
+Example: I select a 7-second entrance theme. I click “Join now” on a Google Meet with five existing participants. As soon as I enter, everyone hears my entrance music for seven seconds. Afterward, the meeting continues normally.
+
+3. Main Features
+
+A. Personalized Profile
+
+* User display name
+* Optional Gmail address as a profile label
+* Custom entrance music
+* Enable/disable toggle
+* Configurable clip length: 5–10 seconds
+* Adjustable volume
+* Preview and replace music
+* Support multiple local profiles as a future enhancement
+
+Do not assume Google Meet exposes participants’ Gmail addresses. The initial version should not require Google OAuth or Gmail permissions.
+
+B. Automatic Google Meet Detection
+
+* Run on https://meet.google.com/*.
+* Detect the pre-join screen.
+* Detect when the user actually enters a meeting.
+* Trigger exactly once per successful meeting entry.
+* Handle joining, leaving, rejoining, switching meetings, and meeting errors.
+* Include debounce and cooldown logic to prevent duplicate playback.
+* Use resilient DOM observation rather than relying entirely on fixed CSS class names.
+
+C. Audio Broadcasting
+
+This is the most important technical requirement.
+
+The entrance music must be transmitted through the user’s outgoing Google Meet audio, rather than simply played locally through their speakers.
+
+Preferred implementation:
+
+* Investigate Chrome-compatible audio injection using Web Audio API and MediaStream APIs.
+* Capture the authorized microphone stream.
+* Combine microphone audio and the uploaded entrance clip with an AudioContext.
+* Use MediaStreamAudioDestinationNode to create a mixed audio stream.
+* Investigate whether this stream can be supplied to Google Meet’s outgoing audio pipeline.
+* Consider early page-context instrumentation through Manifest V3 content scripts using world: "MAIN" and run_at: "document_start".
+* Preserve normal microphone behavior, video tracks, device switching, and mute state.
+* Do not bypass browser permission requirements or force-unmute the user.
+
+Important: Do not assume that creating a mixed MediaStream automatically makes Google Meet transmit it. Verify the outgoing audio using another participant’s browser.
+
+If reliable direct injection is not achievable, implement a documented fallback using a virtual audio device such as VB-CABLE or VoiceMeeter. Clearly explain which features require the fallback.
+
+D. Playback Controls
+
+* Automatically play when joined and enabled.
+* Stop automatically after 5–10 seconds.
+* Fade in/out slightly to avoid abrupt audio.
+* Manual replay button for testing.
+* Emergency stop button.
+* Optional cooldown to avoid accidental repeat playback.
+* If the user is muted, respect that state and show a notification instead of secretly unmuting.
+
+E. Extension Interface
+
+Design a clean, modern Chrome extension with:
+
+* Dark theme
+* Purple/blue accent colors
+* Audio waveform or progress indicator
+* Drag-and-drop audio upload
+* Play preview button
+* Volume slider
+* Duration selector
+* Auto-play toggle
+* Current Google Meet connection status
+* Clear audio-routing status and error messages
+
+The popup should look polished and professional, not like a basic demo.
+
+4. Technical Architecture
+
+Use:
+
+* TypeScript
+* Chrome Extension Manifest V3
+* React + Vite for extension UI
+* Web Audio API
+* Chrome Storage API
+* IndexedDB for locally stored audio
+* MutationObserver for meeting state detection
+
+Suggested project structure:
+
+meetentry/
+  public/
+    icons/
+  src/
+    background/
+      serviceWorker.ts
+    content/
+      meetDetector.ts
+      meetingState.ts
+    injection/
+      audioBridge.ts
+      microphoneMixer.ts
+    audio/
+      audioManager.ts
+      clipProcessor.ts
+    popup/
+      App.tsx
+      components/
+    options/
+      Settings.tsx
+    storage/
+      settings.ts
+      audioStorage.ts
+    types/
+  manifest.json
+  package.json
+  vite.config.ts
+  README.md
+
+Keep privileged extension logic separate from page-context code. Use validated messaging between contexts and do not expose unnecessary user data.
+
+5. Reliability and Privacy Requirements
+
+* All audio files must remain stored locally.
+* Do not upload audio, meeting details, or Gmail addresses to a server.
+* Request the minimum Chrome permissions needed.
+* No paid backend or external database.
+* Never record meeting participants.
+* Do not interfere with Google’s normal microphone controls.
+* If Google Meet changes its internals, fail safely without breaking the meeting.
+* Consider Google Meet noise cancellation, which can suppress music.
+* Handle browser autoplay restrictions and permission requirements.
+* Release microphone/audio resources when the meeting ends.
+* No fabricated success messages: indicate whether outgoing audio has actually been verified.
+
+6. Development Phases
+
+Phase 1 — Basic extension: Build the popup, settings, audio upload, local storage, and music preview.
+
+Phase 2 — Meeting detection: Reliably identify pre-join, joined, and left states.
+
+Phase 3 — Audio transmission prototype: Prove that another participant can hear a locally injected music clip through the outgoing Meet connection without screen sharing.
+
+Phase 4 — Automatic entrance: Connect successful meeting entry to single-shot playback.
+
+Phase 5 — Reliability: Add error handling, microphone safety, mute handling, duplicate prevention, and audio cleanup.
+
+Phase 6 — Packaging: Produce an installable Chrome extension and complete documentation.
+
+7. Acceptance Tests
+
+Test with two separate Chrome profiles or computers in the same Google Meet.
+
+The extension passes only when:
+
+1. User A installs and configures MeetEntry.
+2. User B joins the meeting without the extension.
+3. User A joins with auto-play enabled and microphone unmuted.
+4. User B hears the complete configured entrance clip.
+5. User A can speak normally afterward.
+6. No duplicate music plays during the session.
+7. Leaving the meeting stops the extension’s active audio.
+8. Disabling the extension prevents entrance music.
+9. The extension doesn’t force-unmute or disrupt an existing meeting.
+
+Repeat the test with different microphones, headphones, and noise cancellation settings.
+
+8. Final Deliverables
+
+Generate:
+
+* Complete working source code
+* Manifest V3 configuration
+* All necessary React UI components
+* Audio mixing and playback implementation
+* Google Meet detection logic
+* Local storage implementation
+* Install/build instructions
+* Testing instructions with two participants
+* Known limitations and fallback setup instructions
+* Chrome Web Store packaging guidance
+
+Important development instruction: Do not deliver only a mockup, pseudocode, or nonfunctional demo. Build the project incrementally, implement each phase, and test what can be tested. Explain any Google Meet or Chrome limitation that prevents a feature from being guaranteed. Do not claim audio broadcasting works until independently verified from a receiving participant’s side.
+
+Start by creating the complete project structure and implementing Phase 1, then continue through the remaining phases.
