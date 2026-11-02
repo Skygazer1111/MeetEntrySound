@@ -77,7 +77,10 @@ export function Settings() {
         <div className="card-title">Known limitations</div>
         <ul className="muted">
           <li>The clip is mixed into your outgoing microphone audio. It only plays when your mic is unmuted.</li>
-          <li>Google Meet noise cancellation may reduce or remove music for listeners.</li>
+          <li>
+            Google Meet noise cancellation removes music. For clear entrance music, turn it off in Meet:
+            Settings &gt; Audio &gt; Noise cancellation.
+          </li>
           <li>&quot;Audio sent&quot; means your browser reported outgoing audio. Only another participant can confirm they heard it.</li>
           <li>If Google changes Meet internals, MeetEntry fails safe and leaves your microphone untouched.</li>
         </ul>

@@ -14,6 +14,7 @@
 //   - if Meet itself calls replaceTrack (device change, mute handling) we immediately back off;
 //   - every exit path restores the original track and closes the AudioContext.
 
+import { buildClipChain, softClipCurve } from '@/audio/clipMastering';
 import { applyEnvelope, computeEnvelope } from '@/audio/envelope';
 import type { PlayCommandOptions, PlayFailReason, StopReason } from '@/types/bridge';
 import type { RoutingState } from '@/types/messages';
@@ -34,6 +35,7 @@ interface Session {
   ctx: AudioContext;
   clipGain: GainNode;
   endAtCtxTime: number;
+  savedEncoding: SavedEncoding | null;
   timers: number[];
   unhook: () => void;
   stopping: boolean;
@@ -43,6 +45,67 @@ interface Session {
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 const FAST_STOP_MS = 100;
+
+const LIMITER = { threshold: -6, knee: 6, ratio: 6, attack: 0.005, release: 0.25, trim: 0.85 } as const;
+const DUCK_GAIN = 0.3;
+const DUCK_RAMP_SEC = 0.15;
+const BOOST_MAX_BITRATE = 128_000;
+
+/** Ducks the mic while the clip plays: ramp down at the start, back up at the end. */
+function scheduleDuck(param: AudioParam, t0: number, durSec: number): void {
+  const ramp = Math.min(DUCK_RAMP_SEC, durSec / 4);
+  param.cancelScheduledValues(0);
+  param.setValueAtTime(1, Math.max(0, t0 - 0.01));
+  param.linearRampToValueAtTime(DUCK_GAIN, t0 + ramp);
+  param.setValueAtTime(DUCK_GAIN, t0 + durSec - ramp);
+  param.linearRampToValueAtTime(1, t0 + durSec);
+}
+
+interface SavedEncoding {
+  maxBitrate: number | undefined;
+  priority: RTCPriorityType | undefined;
+  networkPriority: RTCPriorityType | undefined;
+}
+
+type EncodingParams = RTCRtpEncodingParameters & { networkPriority?: RTCPriorityType };
+
+/**
+ * Raises the sender's bitrate cap and priority while the clip plays (Meet's default voice bitrate
+ * is low for music). Returns what to restore, or null if the browser refused (never fatal).
+ */
+function boostEncoding(sender: RTCRtpSender): SavedEncoding | null {
+  try {
+    const params = sender.getParameters();
+    const enc = params.encodings?.[0] as EncodingParams | undefined;
+    if (!enc) return null;
+    const saved: SavedEncoding = { maxBitrate: enc.maxBitrate, priority: enc.priority, networkPriority: enc.networkPriority };
+    if (enc.maxBitrate === undefined || enc.maxBitrate < BOOST_MAX_BITRATE) enc.maxBitrate = BOOST_MAX_BITRATE;
+    enc.priority = 'high';
+    enc.networkPriority = 'high';
+    void sender.setParameters(params).catch(() => undefined);
+    return saved;
+  } catch {
+    return null;
+  }
+}
+
+function restoreEncoding(sender: RTCRtpSender, saved: SavedEncoding | null): void {
+  if (!saved) return;
+  try {
+    const params = sender.getParameters();
+    const enc = params.encodings?.[0] as EncodingParams | undefined;
+    if (!enc) return;
+    if (saved.maxBitrate === undefined) delete enc.maxBitrate;
+    else enc.maxBitrate = saved.maxBitrate;
+    if (saved.priority === undefined) delete enc.priority;
+    else enc.priority = saved.priority;
+    if (saved.networkPriority === undefined) delete enc.networkPriority;
+    else enc.networkPriority = saved.networkPriority;
+    void sender.setParameters(params).catch(() => undefined);
+  } catch {
+    /* sender closed (meeting ended): nothing to restore */
+  }
+}
 
 export class EntrancePlayer {
   private clip: { key: string; bytes: ArrayBuffer } | null = null;
@@ -107,35 +170,52 @@ export class EntrancePlayer {
       const dur = Math.min(opts.durationSec, buffer.duration);
       const mixInput = ctx.createGain();
       const limiter = ctx.createDynamicsCompressor();
-      limiter.threshold.value = -3;
-      limiter.knee.value = 0;
-      limiter.ratio.value = 20;
-      limiter.attack.value = 0.003;
-      limiter.release.value = 0.1;
+      // Gentle limiter (Chrome's compressor adds automatic makeup gain, cancelled by `trim`),
+      // then a tanh soft-clip as the last safety stage instead of hard clipping.
+      limiter.threshold.value = LIMITER.threshold;
+      limiter.knee.value = LIMITER.knee;
+      limiter.ratio.value = LIMITER.ratio;
+      limiter.attack.value = LIMITER.attack;
+      limiter.release.value = LIMITER.release;
+      const trim = ctx.createGain();
+      trim.gain.value = LIMITER.trim;
+      const softClip = ctx.createWaveShaper();
+      softClip.curve = softClipCurve();
+      softClip.oversample = '2x';
       const dest = ctx.createMediaStreamDestination();
-      mixInput.connect(limiter).connect(dest);
+      dest.channelCount = 1;
+      dest.channelCountMode = 'explicit';
+      mixInput.connect(limiter).connect(trim).connect(softClip).connect(dest);
 
+      // Mic passes through a gain node so it can be ducked while the clip plays (less room noise
+      // and echo bleeding into the music, and more headroom for the clip).
       const micSource = ctx.createMediaStreamSource(new MediaStream([original]));
-      micSource.connect(mixInput); // mic passes through at unity gain
+      const micGain = ctx.createGain();
+      micSource.connect(micGain).connect(mixInput);
 
       const clipGain = ctx.createGain();
       const src = ctx.createBufferSource();
       src.buffer = buffer;
-      src.connect(clipGain);
+      const chain = buildClipChain(ctx);
+      src.connect(chain.input);
+      chain.output.connect(clipGain);
       clipGain.connect(mixInput);
       if (opts.monitor) clipGain.connect(ctx.destination);
 
       const t0 = ctx.currentTime + 0.05;
       applyEnvelope(clipGain.gain, t0, computeEnvelope(dur, opts.fadeMs, opts.volume));
+      scheduleDuck(micGain.gain, t0, dur);
       src.start(t0, 0, dur);
 
       const mixed = dest.stream.getAudioTracks()[0];
       if (!mixed) return fail('internal-error', 'Could not create the mixed audio track.');
 
       this.tracker.registerOverride(sender, original);
+      const savedEncoding = boostEncoding(sender);
       try {
         await this.tracker.replaceTrackQuietly(sender, mixed);
       } catch (e) {
+        restoreEncoding(sender, savedEncoding);
         this.tracker.clearOverride(sender);
         mixed.stop();
         return fail('internal-error', `Browser refused to swap the outgoing track: ${e instanceof Error ? e.message : String(e)}`);
@@ -148,6 +228,7 @@ export class EntrancePlayer {
         ctx,
         clipGain,
         endAtCtxTime: t0 + dur,
+        savedEncoding,
         timers: [],
         unhook: () => undefined,
         stopping: false,
@@ -222,6 +303,7 @@ export class EntrancePlayer {
         /* sender closed (e.g. meeting ended): nothing to restore */
       }
     }
+    restoreEncoding(s.sender, s.savedEncoding);
     this.tracker.clearOverride(s.sender);
     try {
       s.mixed.stop();
@@ -235,7 +317,7 @@ export class EntrancePlayer {
 
   /** Samples the sender's own WebRTC stats during playback to check audio really leaves the browser. */
   private async verify(s: Session, durationMs: number): Promise<void> {
-    const stat = { first: null as number | null, last: 0, peak: 0, samples: 0 };
+    const stat = { first: null as number | null, last: 0, peak: 0, samples: 0, targetBitrate: null as number | null };
     const deadline = performance.now() + Math.max(500, durationMs - 300);
     while (!s.finished && performance.now() < deadline) {
       await sleep(350);
@@ -247,6 +329,7 @@ export class EntrancePlayer {
             stat.first ??= r.bytesSent;
             stat.last = r.bytesSent;
             stat.samples++;
+            if (typeof r.targetBitrate === 'number') stat.targetBitrate = r.targetBitrate;
           }
           if (r.type === 'media-source' && r.kind === 'audio' && typeof r.audioLevel === 'number') {
             stat.peak = Math.max(stat.peak, r.audioLevel);
@@ -260,7 +343,8 @@ export class EntrancePlayer {
     if (stat.samples >= 2 && delta > 0 && stat.peak > 0.01) {
       this.hooks.onRouting(
         'sending-verified',
-        `Sender stats: ${delta} audio bytes sent, peak level ${stat.peak.toFixed(2)} while the clip played.`,
+        `Sender stats: ${delta} audio bytes sent, peak level ${stat.peak.toFixed(2)} while the clip played` +
+          (stat.targetBitrate !== null ? `, target bitrate ${Math.round(stat.targetBitrate / 1000)} kbps.` : '.'),
       );
     } else if (!s.finished || s.reason === 'completed') {
       // Stopped early (mute, user stop, Meet took over) is inconclusive, so only a full run can "fail".

@@ -3,6 +3,7 @@
 
 import { applyEnvelope, computeEnvelope } from './envelope';
 import { sliceWav } from './clipProcessor';
+import { buildClipChain } from './clipMastering';
 
 export interface PreviewOptions {
   startOffsetSec: number;
@@ -35,7 +36,9 @@ export class PreviewPlayer {
     gain.connect(ctx.destination);
     const src = ctx.createBufferSource();
     src.buffer = buffer;
-    src.connect(gain);
+    const chain = buildClipChain(ctx);
+    src.connect(chain.input);
+    chain.output.connect(gain);
     const t0 = ctx.currentTime + 0.03;
     applyEnvelope(gain.gain, t0, computeEnvelope(buffer.duration, opts.fadeMs, opts.volume));
     src.onended = () => this.stop();

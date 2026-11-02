@@ -118,8 +118,12 @@ If step 4 fails (A's status says "sent" but B hears nothing, or the status says 
 
 ## Known limitations
 
-- **Noise cancellation.** Meet's server/receiver-side noise cancellation may attenuate or remove music, especially
-  tonal or sparse music. Speech-like and loud, dense clips survive better. Test both settings.
+- **Noise cancellation.** Meet's noise cancellation attenuates or removes music, especially tonal or sparse music.
+  **For clear entrance music, turn it off in Meet (Settings > Audio > Noise cancellation).** MeetEntry cannot
+  change that setting itself. To help the clip survive Meet's voice codec it ducks your mic to ~30% while the
+  clip plays, applies a high-pass filter, gentle compression and a presence boost to the clip, uses a soft
+  limiter, and asks the browser for a higher outgoing audio bitrate (the browser may ignore this; the
+  diagnostics show the target bitrate).
 - **Muted = silent.** The clip travels in your microphone audio, so it only plays when you are unmuted. By
   design MeetEntry never un-mutes you.
 - **Sender-side verification only.** The extension cannot see what remote participants hear.

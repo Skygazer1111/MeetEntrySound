@@ -113,6 +113,8 @@ const setSettings = (patch) =>
     window.__onSettings({ 'meetentry.settings': { newValue: window.__settings } }, 'local');
   }, patch);
 const PRESENT = -55, ABSENT = -75;
+// The mic is intentionally ducked (~-10 dB) while the clip plays and the test tone is quiet, so allow for that.
+const MIC_DUCKED_PRESENT = -65;
 const max = (a) => Math.max(...a), min = (a) => Math.min(...a);
 
 // ---- pre-join --------------------------------------------------------------------------------
@@ -128,13 +130,13 @@ console.log('\n[2] Join (media connects before the in-call UI appears)');
 await page.evaluate(() => window.__startCall({ leaveDelay: 2000 }));
 const series = await page.evaluate(() => window.__measure(11500));
 s = await last();
-const early = series.filter((p) => p.t < 2200);
+const early = series.filter((p) => p.t > 700 && p.t < 1900); // skip the fake-mic start-up transient; the in-call UI appears at ~2000 ms
 const mid = series.filter((p) => p.t > 4200 && p.t < 6800);
 const late = series.filter((p) => p.t > 9500);
 check('state is joined', s?.meetingState === 'joined', s?.meetingState);
 check('no music while only media was connected (no in-call UI yet)', max(early.map((p) => p.clip)) < ABSENT, `${max(early.map((p) => p.clip)).toFixed(0)} dB`);
 check('RECEIVER hears the entrance clip after entry', min(mid.map((p) => p.clip)) > PRESENT, `${min(mid.map((p) => p.clip)).toFixed(0)} dB`);
-check('microphone keeps flowing during the clip', min(mid.map((p) => p.mic)) > PRESENT, `${min(mid.map((p) => p.mic)).toFixed(0)} dB`);
+check('microphone keeps flowing during the clip', min(mid.map((p) => p.mic)) > MIC_DUCKED_PRESENT, `${min(mid.map((p) => p.mic)).toFixed(0)} dB`);
 check('clip ends after the configured 5 s', max(late.map((p) => p.clip)) < ABSENT, `${max(late.map((p) => p.clip)).toFixed(0)} dB`);
 check('exactly one play for this entry', (await playingStarts()) === 1, String(await playingStarts()));
 s = await last();
