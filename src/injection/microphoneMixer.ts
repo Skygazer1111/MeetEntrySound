@@ -111,6 +111,7 @@ export class EntrancePlayer {
   private clip: { key: string; bytes: ArrayBuffer } | null = null;
   private session: Session | null = null;
   private starting = false;
+  private abortStart = false;
 
   constructor(
     private tracker: PeerTracker,
@@ -136,18 +137,10 @@ export class EntrancePlayer {
     this.starting = true;
     let ctx: AudioContext | null = null;
     try {
-      const summary = this.tracker.summary();
-      if (summary.count === 0) {
-        return fail('no-peer-connection', "Google Meet's audio connection was not detected. Reload the Meet tab and rejoin.");
-      }
-      const sender = this.tracker.findMicSender();
-      if (!sender || !sender.track) {
-        return summary.connected
-          ? fail('muted', 'No active microphone track found. You may be muted or your mic is off; nothing was played.')
-          : fail('no-audio-sender', 'The meeting audio connection is not established yet.');
-      }
-      const original = sender.track;
-      if (!original.enabled) return fail('muted', 'You are muted, so the entrance music was skipped. MeetEntry never un-mutes you.');
+      this.abortStart = false;
+      const acquired = await this.acquireMic(opts.waitForMicMs ?? 0);
+      if (!acquired.ok) return acquired.outcome;
+      const { sender, original } = acquired;
 
       ctx = new AudioContext({ latencyHint: 'interactive' });
       if (ctx.state !== 'running') await Promise.race([ctx.resume().catch(() => undefined), sleep(1000)]);
@@ -256,8 +249,41 @@ export class EntrancePlayer {
     }
   }
 
+  /**
+   * Finds the live, enabled microphone sender. Right after admission from a waiting room Meet may
+   * attach or enable the mic track a moment later, so for automatic plays we keep looking for up to
+   * `maxWaitMs` before giving up. We only ever WAIT for the user to be unmuted; we never unmute.
+   */
+  private async acquireMic(
+    maxWaitMs: number,
+  ): Promise<{ ok: true; sender: RTCRtpSender; original: MediaStreamTrack } | { ok: false; outcome: PlayOutcome }> {
+    const deadline = performance.now() + maxWaitMs;
+    for (;;) {
+      let failure: PlayOutcome;
+      const summary = this.tracker.summary();
+      if (summary.count === 0) {
+        failure = fail('no-peer-connection', "Google Meet's audio connection was not detected. Reload the Meet tab and rejoin.");
+      } else {
+        const sender = this.tracker.findMicSender();
+        if (!sender || !sender.track) {
+          failure = summary.connected
+            ? fail('muted', 'No active microphone track found. You may be muted or your mic is off; nothing was played.')
+            : fail('no-audio-sender', 'The meeting audio connection is not established yet.');
+        } else if (!sender.track.enabled) {
+          failure = fail('muted', 'You are muted, so the entrance music was skipped. MeetEntry never un-mutes you.');
+        } else {
+          return { ok: true, sender, original: sender.track };
+        }
+      }
+      if (this.abortStart) return { ok: false, outcome: fail('cancelled', 'Entrance cancelled before it started.') };
+      if (performance.now() >= deadline) return { ok: false, outcome: failure };
+      await sleep(200);
+    }
+  }
+
   /** Stops playback. Fades out quickly for user-visible reasons, tears down at once for page-level ones. */
   stop(reason: StopReason): void {
+    if (this.starting) this.abortStart = true; // abandon a pending wait for the mic
     const s = this.session;
     if (!s || s.finished || s.stopping) return;
     const immediate = reason === 'pagehide' || reason === 'mic-ended' || reason === 'replaced-by-meet' || reason === 'error';

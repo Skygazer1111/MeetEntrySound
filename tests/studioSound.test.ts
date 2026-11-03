@@ -106,13 +106,20 @@ describe('setStudioSound', () => {
     expect(meet.dialogOpen).toBe(false);
   });
 
-  it('fails fast and safe when the More options button is missing', async () => {
+  it('fails safe when the More options button never appears', async () => {
     mountMeet({ switchOn: true, withMoreOptions: false });
-    const started = Date.now();
-    const r = await setStudioSound(false);
+    const r = await setStudioSound(false, document, { moreOptionsWaitMs: 100 });
     expect(r.status).toBe('failed');
-    expect(Date.now() - started).toBeLessThan(1500);
+    expect(r.detail).toMatch(/More options/);
     expect(document.getElementById('meetentry-hide-settings')).toBeNull();
+  });
+
+  it('waits for the toolbar when it is still rendering', async () => {
+    const meet = mountMeet({ switchOn: true, withMoreOptions: false });
+    // Build the real fixture a moment later: swap in a fixture that has the button.
+    setTimeout(() => Object.assign(meet, mountMeet({ switchOn: true })), 300);
+    const r = await setStudioSound(false);
+    expect(r.status).toBe('changed');
   });
 
   it('fails safe and cleans up when the switch is not in the dialog', async () => {
@@ -163,11 +170,20 @@ describe('StudioSoundController', () => {
 
   it('keeps the pending flag when a restore fails, so it is retried later', async () => {
     mountMeet({ switchOn: true });
-    const c = new StudioSoundController(document, memoryStore());
+    const c = new StudioSoundController(document, memoryStore(), { moreOptionsWaitMs: 100, retryDelayMs: 10 });
     await c.disableForEntrance();
     document.body.innerHTML = ''; // Meet UI gone (e.g. left the meeting)
     expect((await c.restore()).status).toBe('failed');
     expect(c.pendingRestore).toBe(true);
+  });
+
+  it('retries once when the first attempt fails, and reports both reasons if it still fails', async () => {
+    mountMeet({ switchOn: true, withMoreOptions: false });
+    const c = new StudioSoundController(document, memoryStore(), { moreOptionsWaitMs: 50, retryDelayMs: 10 });
+    const r = await c.disableForEntrance();
+    expect(r.status).toBe('failed');
+    expect(r.detail).toMatch(/retry:/);
+    expect(c.pendingRestore).toBe(false);
   });
 });
 

@@ -8,10 +8,19 @@
 
 export type StudioResult = { status: 'changed' | 'unchanged' | 'failed'; detail: string };
 
+export interface StudioOptions {
+  /** How long to wait for the "More options" button (the toolbar may still be rendering after admission). */
+  moreOptionsWaitMs?: number;
+  /** Pause before the single retry of a failed switch-off. */
+  retryDelayMs?: number;
+}
+
 const SWITCH_SELECTOR = '[role="switch"], input[type="checkbox"], button[aria-checked]';
 const LABEL = /studio sound|noise cancell?ation/i;
 const OVERALL_TIMEOUT_MS = 6000;
 const STEP_TIMEOUT_MS = 1500;
+const MORE_OPTIONS_WAIT_MS = 2500;
+const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 const HIDE_STYLE_ID = 'meetentry-hide-settings';
 const PENDING_KEY = 'meetentry:studioSoundOff';
 
@@ -79,9 +88,9 @@ export function findMoreOptionsButton(doc: Document): HTMLElement | null {
 function findSettingsMenuItem(doc: Document): HTMLElement | null {
   for (const el of doc.querySelectorAll<HTMLElement>('[role="menuitem"], [role="menuitemradio"], [role="option"], li, button')) {
     const t = norm(el.textContent).toLowerCase();
-    if (t.length > 40) continue;
+    if (t.length > 30 || /audio|video|host|call|caption|accessib/.test(t)) continue;
     // The visible label is "Settings"; the icon ligature text ("settings") may be glued to it.
-    if (t === 'settings' || t === 'settingssettings' || t === 'settings settings') return el;
+    if (/^(settings\s*)+$/.test(t) || (/settings$/.test(t) && t.length <= 20)) return el;
   }
   return null;
 }
@@ -143,7 +152,7 @@ export function isSwitchOn(sw: Element): boolean | null {
  * Opens Settings > Audio, makes the Studio sound switch match `desired`, closes the dialog.
  * Resolves 'changed' only if the switch really flipped, 'unchanged' if it was already right.
  */
-export async function setStudioSound(desired: boolean, doc: Document = document): Promise<StudioResult> {
+export async function setStudioSound(desired: boolean, doc: Document = document, opts: StudioOptions = {}): Promise<StudioResult> {
   const deadline = Date.now() + OVERALL_TIMEOUT_MS;
   const budget = (ms = STEP_TIMEOUT_MS) => Math.max(50, Math.min(ms, deadline - Date.now()));
   const need = async <T>(what: string, probe: () => T | null | undefined | false, ms?: number): Promise<T> => {
@@ -163,9 +172,8 @@ export async function setStudioSound(desired: boolean, doc: Document = document)
   let status: StudioResult['status'] = 'failed';
   let detail = '';
   try {
-    // Step 1: the call toolbar is already on screen, so no waiting here (fail fast when it is not).
-    const more = findMoreOptionsButton(doc);
-    if (!more) throw new StepError('the "More options" button is not on the page');
+    // Step 1: the call toolbar. Right after admission from a waiting room it may still be rendering.
+    const more = await need('the "More options" button', () => findMoreOptionsButton(doc), opts.moreOptionsWaitMs ?? MORE_OPTIONS_WAIT_MS);
     press(more);
 
     // Step 2: Settings entry in the menu.
@@ -224,7 +232,11 @@ async function closeDialog(doc: Document, dialog: HTMLElement | null): Promise<v
 export class StudioSoundController {
   private queue: Promise<unknown> = Promise.resolve();
 
-  constructor(private doc: Document = document, private store: Pick<Storage, 'getItem' | 'setItem' | 'removeItem'> = sessionStorage) {}
+  constructor(
+    private doc: Document = document,
+    private store: Pick<Storage, 'getItem' | 'setItem' | 'removeItem'> = sessionStorage,
+    private opts: StudioOptions = {},
+  ) {}
 
   /** True when we turned Studio sound off earlier and have not restored it yet. */
   get pendingRestore(): boolean {
@@ -234,7 +246,13 @@ export class StudioSoundController {
   /** Turns Studio sound off. If it was off already (and not by us) nothing is changed and nothing will be restored. */
   disableForEntrance(): Promise<StudioResult> {
     return this.run(async () => {
-      const r = await setStudioSound(false, this.doc);
+      let r = await setStudioSound(false, this.doc, this.opts);
+      if (r.status === 'failed') {
+        // The call UI can be busy right after joining (panels opening, toolbar re-rendering): try once more.
+        await sleep(this.opts.retryDelayMs ?? 1000);
+        const retry = await setStudioSound(false, this.doc, this.opts);
+        r = retry.status === 'failed' ? { status: 'failed', detail: `${r.detail}; retry: ${retry.detail}` } : retry;
+      }
       if (r.status === 'changed') this.store.setItem(PENDING_KEY, '1');
       return r;
     });
@@ -244,7 +262,7 @@ export class StudioSoundController {
   restore(): Promise<StudioResult> {
     return this.run(async () => {
       if (!this.pendingRestore) return { status: 'unchanged', detail: 'Nothing to restore.' } as StudioResult;
-      const r = await setStudioSound(true, this.doc);
+      const r = await setStudioSound(true, this.doc, this.opts);
       if (r.status !== 'failed') this.store.removeItem(PENDING_KEY);
       return r;
     });

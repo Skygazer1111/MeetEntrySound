@@ -130,7 +130,9 @@ If step 4 fails (A's status says "sent" but B hears nothing, or the status says 
   limiter, and asks the browser for a higher outgoing audio bitrate (the browser may ignore this; the
   diagnostics show the target bitrate).
 - **Muted = silent.** The clip travels in your microphone audio, so it only plays when you are unmuted. By
-  design MeetEntry never un-mutes you.
+  design MeetEntry never un-mutes you. After you enter, the automatic play waits up to 10 seconds for a live,
+  unmuted mic (Meet can attach or enable it a moment after you are admitted from a waiting room, and you may
+  unmute right after joining); if you are still muted after that it is skipped.
 - **Sender-side verification only.** The extension cannot see what remote participants hear.
 - **Language.** The "Join now / Ask to join" and waiting-room hints are English only. They are cosmetic: entry
   detection relies on the language-independent leave icon plus the media connection.

@@ -234,12 +234,13 @@ class EntryController {
     }
 
     // Studio sound / noise cancellation strips music, so switch it off while the clip plays.
-    // Skipped when muted (nothing will play) and never fatal: on failure the clip still plays.
-    if (this.settings.autoDisableStudioSound && this.peers.micMuted !== true) {
+    // Automatic plays always do it: right after admission the mic can briefly look muted and the player
+    // waits for it. A manual replay while muted does nothing, so it skips this. Never fatal either way.
+    if (this.settings.autoDisableStudioSound && (source === 'auto' || this.peers.micMuted !== true)) {
       const r = await this.studio.disableForEntrance().catch((): { status: 'failed'; detail: string } => ({ status: 'failed', detail: 'unexpected error' }));
       if (r.status === 'failed') {
         this.log('warn', `Could not turn off Studio sound: ${r.detail}`);
-        showToast("Couldn't turn off Studio sound automatically. For clear music, turn it off in Meet: Settings > Audio.", 'warn');
+        showToast(`Couldn't turn off Studio sound automatically (${r.detail}). For clear music, turn it off in Meet: Settings > Audio.`, 'warn', 10000);
       } else if (r.status === 'changed') {
         this.log('info', 'Studio sound switched off for the entrance.');
         await sleep(STUDIO_SETTLE_MS);
@@ -303,6 +304,7 @@ class EntryController {
   }
 
   private onPlayFailed(reason: PlayFailReason, message: string, source: 'auto' | 'manual'): void {
+    if (reason === 'cancelled') return this.log('info', message); // user left or pressed Stop: no error, no toast
     if (reason === 'no-peer-connection') this.routingResult = { state: 'no-peer-connection', detail: message };
     else if (reason !== 'muted' && reason !== 'already-playing' && reason !== 'no-audio-sender') {
       this.routingResult = { state: 'failed', detail: message };

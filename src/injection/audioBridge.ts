@@ -6,6 +6,9 @@ import { BRIDGE_SOURCE, MAIN_READY_EVENT, parseBridgeCommand, type BridgeEvent }
 import type { EntrancePlayer, PlayOutcome } from './microphoneMixer';
 import type { PeerTracker } from './peerTracker';
 
+/** After admission from a waiting room Meet can take a moment to attach/enable the mic: wait this long for it (auto plays only). */
+const AUTO_PLAY_MIC_WAIT_MS = 10_000;
+
 export class MainBridge {
   private port: MessagePort | null = null;
 
@@ -49,7 +52,7 @@ export class MainBridge {
         break;
       case 'play':
         void this.player
-          .play(cmd)
+          .play({ ...cmd, waitForMicMs: cmd.source === 'auto' ? AUTO_PLAY_MIC_WAIT_MS : 0 })
           .catch((): PlayOutcome => ({ ok: false, reason: 'internal-error', message: 'Unexpected error.' }))
           .then((o) =>
             this.send(

@@ -15,6 +15,7 @@ export type PlayFailReason =
   | 'already-playing'
   | 'autoplay-blocked'
   | 'decode-failed'
+  | 'cancelled'
   | 'internal-error';
 
 export type StopReason =
@@ -32,6 +33,12 @@ export interface PlayCommandOptions {
   durationSec: number; // 5..10 (clamped by the clip length)
   fadeMs: number;
   monitor: boolean;
+  /**
+   * Set by the page-context bridge (not sent over the wire): how long to keep waiting for a live,
+   * unmuted mic track before giving up. Automatic plays wait a few seconds because Meet may attach
+   * or enable the mic a moment after admission from a waiting room.
+   */
+  waitForMicMs?: number;
 }
 
 export type BridgeCommand =
@@ -59,7 +66,7 @@ const STOP_REASONS: readonly string[] = [
 ];
 const FAIL_REASONS: readonly string[] = [
   'no-clip', 'no-peer-connection', 'no-audio-sender', 'muted',
-  'already-playing', 'autoplay-blocked', 'decode-failed', 'internal-error',
+  'already-playing', 'autoplay-blocked', 'decode-failed', 'cancelled', 'internal-error',
 ];
 const ROUTING_STATES: readonly string[] = ['unknown', 'no-peer-connection', 'ready', 'sending-verified', 'failed'];
 

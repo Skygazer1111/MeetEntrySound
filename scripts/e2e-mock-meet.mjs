@@ -177,6 +177,8 @@ await sleep(2600);
 await setSettings({ enabled: true, cooldownSec: 0 });
 await page.evaluate(() => window.__startCall({ muted: true }));
 await sleep(4000);
+check('muted: nothing plays (still waiting for you to unmute)', (await playingStarts()) === 1);
+await sleep(9000); // the automatic play waits ~10 s for the mic, then gives up
 s = await last();
 check('muted: nothing plays', (await playingStarts()) === 1);
 check('muted: user is told it was skipped', s?.lastEvent?.level === 'warn' && /muted/i.test(s.lastEvent.message), s?.lastEvent?.message);
@@ -213,6 +215,21 @@ s = await last();
 check('emergency stop ends playback', s?.playback === 'idle', s?.lastEvent?.message);
 const rejected = await page.evaluate(() => window.__cmd({ t: 'replay' }, { id: 'evil-extension' }, () => {}));
 check('commands from other senders are ignored', rejected === false);
+
+// ---- mic becomes available a little after admission (waiting-room case) --------------------------
+console.log('\n[8] Mic unmuted a few seconds after entering still plays');
+await page.evaluate(() => window.__leave());
+await sleep(2600);
+const before8 = await playingStarts();
+await page.evaluate(() => window.__startCall({ muted: true }));
+await sleep(3000); // joined; auto play is waiting for the mic
+check('late unmute: not playing while muted', (await playingStarts()) === before8);
+await page.evaluate(() => { window.__track.enabled = true; }); // the user (or Meet) unmutes
+await sleep(2500);
+check('late unmute: plays once the mic is live', (await playingStarts()) === before8 + 1, `${await playingStarts()} vs ${before8}`);
+s = await last();
+check('late unmute: status shows playing', s?.playback === 'playing', s?.lastEvent?.message);
+await page.evaluate(() => window.__cmd({ t: 'stop' }, { id: 'mock' }, () => {}));
 
 await browser.close();
 const failed = results.filter((r) => !r.ok);
