@@ -65,6 +65,26 @@ export function Settings() {
       </section>
 
       <section className="card">
+        <div className="card-title">Studio sound</div>
+        <label className="opt">
+          <span>
+            Switch off Meet&apos;s Studio sound while the clip plays
+            <span className="muted block">
+              Studio sound / noise cancellation filters out anything that is not speech, which breaks up music. MeetEntry
+              briefly opens Meet&apos;s Settings &gt; Audio, turns it off, plays the clip, then turns it back on. If Meet&apos;s
+              layout changes this can fail; you will see a notice and the clip still plays. You can also turn Studio sound
+              off yourself in Meet and disable this option.
+            </span>
+          </span>
+          <input
+            type="checkbox"
+            checked={settings.autoDisableStudioSound}
+            onChange={(e) => update({ autoDisableStudioSound: e.target.checked })}
+          />
+        </label>
+      </section>
+
+      <section className="card">
         <div className="card-title">Diagnostics</div>
         {status ? (
           <pre className="diag">{JSON.stringify(status, null, 2)}</pre>
@@ -78,8 +98,8 @@ export function Settings() {
         <ul className="muted">
           <li>The clip is mixed into your outgoing microphone audio. It only plays when your mic is unmuted.</li>
           <li>
-            Google Meet noise cancellation removes music. For clear entrance music, turn it off in Meet:
-            Settings &gt; Audio &gt; Noise cancellation.
+            Google Meet&apos;s Studio sound / noise cancellation removes music. MeetEntry can switch it off for the clip
+            automatically (see above), or you can turn it off yourself: Settings &gt; Audio &gt; Studio sound.
           </li>
           <li>&quot;Audio sent&quot; means your browser reported outgoing audio. Only another participant can confirm they heard it.</li>
           <li>If Google changes Meet internals, MeetEntry fails safe and leaves your microphone untouched.</li>

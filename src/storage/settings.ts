@@ -19,6 +19,11 @@ export interface Settings {
   fadeMs: number;
   /** Also play the clip through your own speakers while it is sent. May cause echo without headphones. */
   monitorLocally: boolean;
+  /**
+   * Briefly switch Meet's "Studio sound" / noise cancellation off while the clip plays, then back on.
+   * Those filters strip anything that is not speech, which wrecks music.
+   */
+  autoDisableStudioSound: boolean;
   /** Metadata about the stored clip (the audio itself lives in IndexedDB). */
   clipId: string | null;
   clipName: string | null;
@@ -38,6 +43,7 @@ export const DEFAULT_SETTINGS: Settings = {
   cooldownSec: 30,
   fadeMs: 400,
   monitorLocally: false,
+  autoDisableStudioSound: true,
   clipId: null,
   clipName: null,
   clipLengthSec: 0,
@@ -65,6 +71,7 @@ export function sanitizeSettings(raw: unknown): Settings {
     cooldownSec: num(r.cooldownSec, d.cooldownSec, 0, 600),
     fadeMs: num(r.fadeMs, d.fadeMs, 0, 1500),
     monitorLocally: r.monitorLocally === true,
+    autoDisableStudioSound: typeof r.autoDisableStudioSound === 'boolean' ? r.autoDisableStudioSound : d.autoDisableStudioSound,
     clipId: typeof r.clipId === 'string' && r.clipId ? r.clipId.slice(0, 100) : null,
     clipName: typeof r.clipName === 'string' ? r.clipName.slice(0, 200) : null,
     clipLengthSec,

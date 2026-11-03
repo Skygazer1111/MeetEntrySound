@@ -16,9 +16,13 @@ import {
 import { BridgeClient } from './bridgeClient';
 import { MeetDetector, parseMeetCode, readDomSignals } from './meetDetector';
 import { MeetingStateMachine, type Transition } from './meetingState';
+import { StudioSoundController } from './studioSound';
 import { showToast } from './toast';
 
 const LAST_AUTO_PLAY_KEY = 'meetentry:lastAutoPlay';
+/** After switching Studio sound, give Meet time to apply it (and to swap tracks, if it does) before we hook the sender. */
+const STUDIO_SETTLE_MS = 700;
+const sleep = (ms: number) => new Promise<void>((r) => window.setTimeout(r, ms));
 const NO_PEERS: PeerSummary = { count: 0, connected: false, audioSender: false, micMuted: null };
 
 class EntryController {
@@ -42,6 +46,7 @@ class EntryController {
     },
   );
   private detector = new MeetDetector(() => this.tick(true));
+  private studio = new StudioSoundController();
 
   private loadedClipKey: string | null = null;
   private clipLoading: Promise<boolean> | null = null;
@@ -132,15 +137,39 @@ class EntryController {
     this.handledEntryId = t.entryId;
     this.log('info', 'Joined the meeting.');
 
-    if (!this.settingsLoaded || !this.settings.enabled) return this.log('info', 'Entrance music is turned off.');
-    if (!this.settings.clipId) return this.log('warn', 'No entrance clip is configured.');
+    // If an earlier meeting ended while we had Studio sound switched off, put it back now unless we are about to play.
+    const skip = (level: LogEntry['level'], message: string) => {
+      this.log(level, message);
+      void this.restoreStudioSound();
+    };
+    if (!this.settingsLoaded || !this.settings.enabled) return skip('info', 'Entrance music is turned off.');
+    if (!this.settings.clipId) return skip('warn', 'No entrance clip is configured.');
 
     const last = Number(sessionStorage.getItem(LAST_AUTO_PLAY_KEY) ?? 0);
     const remaining = this.settings.cooldownSec * 1000 - (Date.now() - last);
     if (remaining > 0) {
-      return this.log('info', `Skipped entrance music: cooldown active (${Math.ceil(remaining / 1000)}s left).`);
+      return skip('info', `Skipped entrance music: cooldown active (${Math.ceil(remaining / 1000)}s left).`);
     }
     void this.play('auto');
+  }
+
+  // ---- Studio sound ----------------------------------------------------------------------
+
+  /** Switches Meet's Studio sound back on if (and only if) we switched it off. Never throws. */
+  private async restoreStudioSound(delayMs = 0): Promise<void> {
+    try {
+      if (!this.studio.pendingRestore) return;
+      if (delayMs > 0) await sleep(delayMs);
+      const r = await this.studio.restore();
+      if (r.status === 'failed') {
+        this.log('warn', `Could not turn Studio sound back on: ${r.detail}`);
+        showToast('Studio sound is still off. Turn it back on in Meet: Settings > Audio.', 'warn');
+      } else if (r.status === 'changed') {
+        this.log('info', 'Studio sound turned back on.');
+      }
+    } catch {
+      /* never affect the call */
+    }
   }
 
   // ---- clip hand-off ---------------------------------------------------------------------
@@ -203,6 +232,20 @@ class EntryController {
       this.log('error', 'Entrance clip could not be prepared.');
       return;
     }
+
+    // Studio sound / noise cancellation strips music, so switch it off while the clip plays.
+    // Skipped when muted (nothing will play) and never fatal: on failure the clip still plays.
+    if (this.settings.autoDisableStudioSound && this.peers.micMuted !== true) {
+      const r = await this.studio.disableForEntrance().catch((): { status: 'failed'; detail: string } => ({ status: 'failed', detail: 'unexpected error' }));
+      if (r.status === 'failed') {
+        this.log('warn', `Could not turn off Studio sound: ${r.detail}`);
+        showToast("Couldn't turn off Studio sound automatically. For clear music, turn it off in Meet: Settings > Audio.", 'warn');
+      } else if (r.status === 'changed') {
+        this.log('info', 'Studio sound switched off for the entrance.');
+        await sleep(STUDIO_SETTLE_MS);
+      }
+    }
+
     const requestId = ++this.requestId;
     this.pendingPlays.set(requestId, source);
     const s = this.settings;
@@ -238,6 +281,7 @@ class EntryController {
         } else {
           this.playback = 'idle';
           this.onPlayFailed(e.reason, e.message, source ?? 'manual');
+          void this.restoreStudioSound();
         }
         this.publish(true);
         break;
@@ -245,6 +289,8 @@ class EntryController {
       case 'playback-ended':
         this.playback = 'idle';
         this.onPlaybackEnded(e.reason);
+        // Leaving the meeting means the settings UI is gone; the pending flag is repaired at the next entry.
+        if (e.reason !== 'left-meeting' && e.reason !== 'pagehide') void this.restoreStudioSound(e.reason === 'completed' ? 300 : 0);
         this.publish(true);
         break;
       case 'routing':

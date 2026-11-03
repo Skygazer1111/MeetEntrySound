@@ -118,9 +118,14 @@ If step 4 fails (A's status says "sent" but B hears nothing, or the status says 
 
 ## Known limitations
 
-- **Noise cancellation.** Meet's noise cancellation attenuates or removes music, especially tonal or sparse music.
-  **For clear entrance music, turn it off in Meet (Settings > Audio > Noise cancellation).** MeetEntry cannot
-  change that setting itself. To help the clip survive Meet's voice codec it ducks your mic to ~30% while the
+- **Studio sound / noise cancellation.** Meet's "Studio sound" ("Filters out sound from your mic that isn't
+  speech") and noise cancellation break up or remove music. By default MeetEntry briefly opens Meet's
+  Settings > Audio, switches it off before the clip, and switches it back on afterwards (option "Switch off Meet's
+  Studio sound while the clip plays"). This drives Meet's own UI, so it depends on Meet's English labels
+  ("More options", "Settings", "Audio", "Studio sound") and **fails safe**: if anything is not found you get a notice
+  and the clip still plays. If you leave the meeting mid-clip, Studio sound is restored at your next entry in that
+  tab; if it ever stays off, turn it back on in Settings > Audio. You can disable the option and manage the Meet
+  setting yourself. To help the clip survive Meet's voice codec it ducks your mic to ~30% while the
   clip plays, applies a high-pass filter, gentle compression and a presence boost to the clip, uses a soft
   limiter, and asks the browser for a higher outgoing audio bitrate (the browser may ignore this; the
   diagnostics show the target bitrate).

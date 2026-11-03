@@ -27,7 +27,7 @@ const clipB64 = wav16(tone(1500, 8, 0.7), 48000).toString('base64');
 
 const settings0 = {
   enabled: true, displayName: '', email: '', volume: 1, durationSec: 5, startOffsetSec: 0, cooldownSec: 30,
-  fadeMs: 300, monitorLocally: false, clipId: 'clip-1', clipName: 'test.wav', clipLengthSec: 8,
+  fadeMs: 300, monitorLocally: false, autoDisableStudioSound: false, clipId: 'clip-1', clipName: 'test.wav', clipLengthSec: 8,
 };
 
 const chromeMock = `
